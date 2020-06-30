@@ -80,6 +80,7 @@ historyTxs = []
 ```
 
 Example for using the tool to verify the vulnerability does not apply (ZenGo wallet):
-|![BigSpender demo](https://raw.githubusercontent.com/KZen-networks/big-spender/master/demo.gif "BigSpender check on ZenGo")|
-|:--:|
+<p align="center">
+ <img src="https://raw.githubusercontent.com/KZen-networks/big-spender/master/demo.gif">
+</p>
 
