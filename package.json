@@ -1,0 +1,14 @@
+{
+  "name": "rbf",
+  "version": "0.1.0",
+  "description": "Proof-of-concept for Bitcoin RBF",
+  "main": "index",
+  "author": "oleiba <odedleiba5@gmail.com>",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "bitcoinjs-lib": "4.0.1",
+    "commander": "^5.0.0",
+    "electrum-client": "https://github.com/KZen-networks/node-electrum-client.git",
+    "lodash.maxby": "^4.6.0"
+  }
+}

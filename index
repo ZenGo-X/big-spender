@@ -1,0 +1,211 @@
+#!/usr/bin/env node
+
+const bitcoin = require('bitcoinjs-lib');
+const ElectrumCli = require('electrum-client');
+const program = require('commander');
+const maxBy = require('lodash.maxby');
+
+const SAT_IN_BTC = 100000000;
+const MIN_RELAY_TX_FEE_PER_BYTE = 1;  // Bitcoin Core's setting
+const electrumSettings = {
+  mainnet: {
+    host: 'ec2-54-202-79-18.us-west-2.compute.amazonaws.com',
+    port: 50001,
+  },
+  testnet: {
+    host: 'ec2-34-219-15-143.us-west-2.compute.amazonaws.com',
+    port: 60001,
+  }
+};
+
+const privateKey = process.env.PRIVATE_KEY;  // private key in hex
+const privateKeyError = 'No private key is set. Did you remember to set environment variable PRIVATE_KEY?';
+
+program
+  .command('address')
+  .alias('a')
+  .description('Generate a random Bitcoin address')
+  .option('-n, --network [name]', 'Network - testnet (default) or mainnet')
+  .option('-p, --printPrivateKey [boolean]', 'Should it print the generated private key')
+  .action((options) => {
+    const networkName = options.network || 'testnet';
+    console.log(createRandomAddress(networkName, options.printPrivateKey));
+  });
+
+program
+  .command('rbf')
+  .description('Send N transactions: each replaces the previous one with a higher fee. Last one goes back to sender.')
+  .option('-t, --toAddress [address]', 'Recipient address of the transaction')
+  .option('-n, --network [name]', 'Network - testnet (default) or mainnet')
+  .option('-k, --times [number]', 'Number of transactions where each replaces the previous one (must be >= 2, default: 2).')
+  .action(async (options) => {
+    if (!privateKey) {
+      return console.error(privateKeyError);
+    }
+
+    const networkName = options.network || 'testnet';
+    const electrumClient = getElectrumClient(networkName);
+    await electrumClient.connect();
+
+    const times = parseInt(options.times) || 2;
+    if (times < 2) {
+      console.error('"times" parameter must be >= 2, quitting.');
+      return electrumClient.close();
+    }
+
+    const { utxoTxid, utxoIndex, utxoAmount } = await getUtxo(electrumClient, privateKey, networkName);
+    await nSpend(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, times, options);
+    electrumClient.close();
+  });
+
+program
+  .command('listen <address>')
+  .alias('l')
+  .description('Listen for changes in the transactions history of the given address')
+  .option('-n, --network [name]', 'Network - testnet (default) or mainnet')
+  .action(async (address, options) => {
+    const networkName = options.network || 'testnet';
+    const electrumClient = getElectrumClient(networkName);
+    await electrumClient.connect();
+
+    const scriptHash = toScriptHash(address);
+    await electrumClient.blockchainScripthash_subscribe(scriptHash);
+    console.log('Listening for changes...');
+    electrumClient.subscribe.on('blockchain.scripthash.subscribe', async v => {
+      const [eventScriptHash, eventStatusHash] = v;
+      if (eventScriptHash !== scriptHash) {
+        return;
+      }
+      console.log('-'.repeat(10));
+      console.log('history changed!');
+      const historyTxs = await electrumClient.blockchainScripthash_getHistory(scriptHash);
+      console.log('historyTxs =', historyTxs);
+    });
+  });
+
+program
+  .command('signing-address')
+  .alias('sa')
+  .description('Get the address of the signing private key')
+  .option('-n, --network [name]', 'Network - testnet (default) or mainnet')
+  .action((options) => {
+    if (!privateKey) {
+      return console.error(privateKeyError);
+    }
+
+    const networkName = options.network || 'testnet';
+    console.log(getSigningAddress(networkName));
+  });
+
+const getUtxo = async function(electrumClient, privateKey, networkName) {
+  const network = getNetwork(networkName);
+  const fromKeyPair = bitcoin.ECPair.fromPrivateKey(Buffer.from(privateKey, 'hex'), { network, compressed: true });
+  const fromAddress = keyPairToAddress(fromKeyPair, networkName);
+  const scriptHash = toScriptHash(fromAddress, networkName);
+  const utxos = await electrumClient.blockchainScripthash_listunspent(scriptHash);
+  const { tx_hash: utxoTxid, tx_pos: utxoIndex, value: utxoAmount } = maxBy(utxos, 'value');
+  return {utxoTxid, utxoIndex, utxoAmount};
+};
+
+const toScriptHash = function(address, networkName) {
+  const network = getNetwork(networkName);
+  let script = bitcoin.address.toOutputScript(address, network);
+  let hash = bitcoin.crypto.sha256(script);
+  return Buffer.from(hash.reverse()).toString('hex');
+};
+
+const getSigningAddress = function(networkName) {
+  const network = getNetwork(networkName);
+  const keyPair = bitcoin.ECPair.fromPrivateKey(Buffer.from(privateKey, 'hex'), { network, compressed: true });
+  return keyPairToAddress(keyPair, networkName);
+};
+
+const createRandomAddress = function(networkName, printPrivateKey) {
+  const keyPair = bitcoin.ECPair.makeRandom({ compressed: true });
+  if (printPrivateKey) {
+    console.log(`private key: ${keyPair.privateKey.toString('hex')}`);
+  }
+  return keyPairToAddress(keyPair, networkName);
+};
+
+const keyPairToAddress = function(keyPair, networkName) {
+  const network = getNetwork(networkName);
+  return bitcoin.payments.p2wpkh({ pubkey: keyPair.publicKey, network }).address;
+};
+
+function setTimeoutPromise(timeout) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, timeout)
+  });
+}
+
+const nSpend = async function(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, times, options) {
+  const { toAddress, network: networkName } = options;
+  const to = {
+    address: toAddress || createRandomAddress(networkName),
+    amount: 0.0001 * SAT_IN_BTC,
+  };
+  let count = 0;
+  const minFee = calcMinFee(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, to, networkName);
+  while (count < times) {
+    const newFee = (count + 1) * minFee;
+    const isLast = count === times - 1;
+    const txHex = buildTransaction(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, newFee, !isLast && to, networkName);
+    console.log(`broadcasting #${count}${isLast ? ' back to the sender' : ''}...`);
+    const txid = await electrumClient.blockchainTransaction_broadcast(txHex);
+    console.log(`txid #${count}: ${txid}`);
+    count++;
+
+    if (!isLast) {
+      await setTimeoutPromise(10000);
+    }
+  }
+};
+
+const calcMinFee = function(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, to, networkName) {
+  const txHex = buildTransaction(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, 1, to, networkName);
+  const tx = bitcoin.Transaction.fromHex(txHex);
+  const txVirtualSize = tx.virtualSize();
+  return txVirtualSize * MIN_RELAY_TX_FEE_PER_BYTE;
+};
+
+const buildTransaction = function(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, fee, to, networkName) {
+  const network = getNetwork(networkName);
+  const fromKeyPair = bitcoin.ECPair.fromPrivateKey(Buffer.from(privateKey, 'hex'), { network, compressed: true });
+  const fromAddress = keyPairToAddress(fromKeyPair, networkName);
+  const txb = new bitcoin.TransactionBuilder(network);
+  const replaceByFeeSequence = 0;  // any sequence number < 0xfffffffe signals RBF
+  const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: fromKeyPair.publicKey, network });
+  txb.addInput(utxoTxid, utxoIndex, replaceByFeeSequence, p2wpkh.output);
+
+  if (to) {
+    txb.addOutput(to.address, to.amount);
+  }
+
+  // change
+  txb.addOutput(
+    fromAddress,
+    utxoAmount - fee - ((to && to.amount) || 0),
+  );
+
+  txb.sign(
+    0,
+    fromKeyPair,
+    null,
+    null,
+    utxoAmount,
+  );
+  const tx = txb.build();
+  return tx.toHex();
+};
+
+const getElectrumClient = function (networkName) {
+  return new ElectrumCli(electrumSettings[networkName].port, electrumSettings[networkName].host, 'tcp');
+};
+
+const getNetwork = function (networkName) {
+  return bitcoin.networks[networkName === 'mainnet' ? 'bitcoin' : 'testnet'];
+};
+
+program.parse(process.argv);
+
