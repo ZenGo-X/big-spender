@@ -37,7 +37,8 @@ program
   .description('Send N transactions: each replaces the previous one with a higher fee. Last one goes back to sender.')
   .option('-t, --toAddress [address]', 'Recipient address of the transaction')
   .option('-n, --network [name]', 'Network - testnet (default) or mainnet')
-  .option('-k, --times [number]', 'Number of transactions where each replaces the previous one (must be >= 2, default: 2).')
+  .option('-k, --times [number]', 'Number of transactions where each replaces the previous one (must be >= 2, default: 2)')
+  .option('-a, --amount [number]', 'Amount in BTC to send with each replaced transaction (default: 0.0001)')
   .action(async (options) => {
     if (!privateKey) {
       return console.error(privateKeyError);
@@ -140,10 +141,10 @@ function setTimeoutPromise(timeout) {
 }
 
 const nSpend = async function(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, times, options) {
-  const { toAddress, network: networkName } = options;
+  const { amount, toAddress, network: networkName } = options;
   const to = {
     address: toAddress || createRandomAddress(networkName),
-    amount: 0.0001 * SAT_IN_BTC,
+    amount: ((amount && parseFloat(amount)) || 0.0001) * SAT_IN_BTC,
   };
   let count = 0;
   const minFee = calcMinFee(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, to, networkName);
