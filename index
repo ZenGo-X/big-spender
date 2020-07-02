@@ -144,7 +144,7 @@ const nSpend = async function(electrumClient, privateKey, utxoTxid, utxoIndex, u
   const { amount, toAddress, network: networkName } = options;
   const to = {
     address: toAddress || createRandomAddress(networkName),
-    amount: ((amount && parseFloat(amount)) || 0.0001) * SAT_IN_BTC,
+    amount: Math.round(((amount && parseFloat(amount)) || 0.0001) * SAT_IN_BTC),
   };
   let count = 0;
   const minFee = calcMinFee(electrumClient, privateKey, utxoTxid, utxoIndex, utxoAmount, to, networkName);
