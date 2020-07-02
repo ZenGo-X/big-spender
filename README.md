@@ -1,5 +1,5 @@
 # BigSpender
-A tool for checking the BigSpender vulnerability in Bitcoin wallets.<br>
+A tool for checking the BigSpender vulnerability in Bitcoin wallets.
 This repository gathers a set of scripts for double spending at zero-confirmations, using Bitcoin's [Replace-by-Fee](https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki).<br> 
 For some vulnerable wallets, it allows a malicious sender to perform the following attacks:
 1. **Basic double-spend**: Attackers can exploit this problem by sending a victim a transaction of some value but with minimal fees (will be pending for a long time) and asking for some goods or services in return, then canceling the transaction immediately. Since the vulnerable wallets do not reflect cancellations and still show an incorrect balance, the victim will see their wallet’s balance has increased and believe the transaction to be complete. Therefore, the victim may provide the attacker with the goods or services without actually receiving any payment. 
@@ -10,7 +10,8 @@ Note: Unlike other double spend schemes, this scheme is easy to use, and totally
 3. **Denial of Service**: Even if a wallet owner is not fooled by this attack, they cannot “send all” their holdings as the presented balance is now higher than the actual balance. When they try to send all, it fails. This fact also disables other kinds of sending attempts (e.g. sending only a fraction of the wallet's balance) if the wallet’s coin selection algorithm chooses funds from this nonexistent transaction.<br>
 Attackers can do a mass “BigSpender” DoS by sending a tiny amount (“dust”) to many users of a vulnerable wallet and cancel it (so it does not require a lot of capital). The consent of victims is not required, and they are now unable to use their funds.<br>
 
-It was also found that in some wallets __recovery is hard__ - even after uninstalling and reinstalling the wallet software, restoring from the same seed results with the same false balance and inability to send. 
+It was also found that in some wallets __recovery is hard__ - even after uninstalling and reinstalling the wallet software, restoring from the same seed results with the same false balance and inability to send.<br>
+You can read more [here](https://zengo.com/bigspender-double-spend-vulnerability-in-bitcoin-wallets/).
 
 ## Usage
 
